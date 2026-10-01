@@ -10,7 +10,7 @@ The design is in [docs/superpowers/specs/2026-10-01-piscan-design.md](docs/super
 
 ## Hardware
 
-- Raspberry Pi Zero 2 W running Raspberry Pi OS Lite, 64-bit (bookworm). 64-bit matters because it gets prebuilt `pikepdf` wheels.
+- Raspberry Pi Zero 2 W running Raspberry Pi OS Lite, 64-bit (trixie, which ships Python 3.13). Use the 64-bit image - it gets prebuilt `pikepdf` wheels, which the 32-bit one may not, and building `pikepdf` on a Zero is slow at best. The older bookworm base (Python 3.11) should still work.
 - The Doxie on the Zero's USB data port, through an OTG adapter.
 - A 2.5 A supply, or a powered hub. The Doxie charges from the Pi, and a weak supply brings on brownouts.
 - A separate Paperless-ngx server on the same network.
@@ -146,7 +146,7 @@ python3 -m venv .venv
 
 Python 3.11 or newer. CI runs the tests and `ruff check` on 3.11 and 3.13 for every push. The tests need no hardware and no network, and use synthetic JPEGs.
 
-The installer has its own test, which is not part of the pytest run. `tests/installer/run.sh` builds the current wheel and a higher-version one, then runs `install.sh` in a `debian:bookworm` container: fresh install, a no-change re-run, an upgrade, and config and `fstab` preservation. It needs docker. The default platform is `linux/arm64`, which is slow under emulation on an x86_64 host (about five minutes); `PLATFORM=linux/amd64 tests/installer/run.sh` is quicker.
+The installer has its own test, which is not part of the pytest run. `tests/installer/run.sh` builds the current wheel and a higher-version one, then runs `install.sh` in a `debian:trixie` container: fresh install, a no-change re-run, an upgrade, and config and `fstab` preservation. It needs docker. The default platform is `linux/arm64`, which is slow under emulation on an x86_64 host (about five minutes); `PLATFORM=linux/amd64 tests/installer/run.sh` is quicker. `IMAGE=debian:bookworm tests/installer/run.sh` checks the older base.
 
 ### Releases
 

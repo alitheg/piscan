@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Runs install.sh in a debian:bookworm container. Not part of the pytest run.
+# Runs install.sh in a debian:trixie container (what current Raspberry Pi OS is
+# based on). Not part of the pytest run.
 #
 #   tests/installer/run.sh
 #
 # Needs docker and the build module (pip install -e '.[dev]'). The default
 # platform is linux/arm64, which is what the Pi runs; on an x86_64 host that
-# needs qemu binfmt and is slow. Use PLATFORM=linux/amd64 for a quick run.
+# needs qemu binfmt and is slow. Use PLATFORM=linux/amd64 for a quick run, and
+# IMAGE=debian:bookworm to check an older Pi OS base (Python 3.11).
 # Network access is needed inside the container (apt and PyPI).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 platform="${PLATFORM:-linux/arm64}"
+image="${IMAGE:-debian:trixie}"
 python="${PYTHON:-$repo/.venv/bin/python}"
 
 work="$(mktemp -d)"
@@ -34,11 +37,11 @@ mkdir "$work/wheels-next"
 "$python" -m build --wheel --outdir "$work/wheels-next" "$bump" >/dev/null
 echo "    current=$current upgrade=$next"
 
-echo "==> Running in $platform"
+echo "==> Running $image in $platform"
 docker run --rm --platform "$platform" \
     -e CURRENT="$current" -e NEXT="$next" \
     -v "$repo/install.sh:/test/install.sh:ro" \
     -v "$here/inside.sh:/test/inside.sh:ro" \
     -v "$work/wheels:/wheels:ro" \
     -v "$work/wheels-next:/wheels-next:ro" \
-    debian:bookworm bash /test/inside.sh
+    "$image" bash /test/inside.sh

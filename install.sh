@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# piscan installer for Raspberry Pi OS Lite (bookworm).
+# piscan installer for Raspberry Pi OS Lite (64-bit; trixie, or bookworm).
 #
 #   curl -fsSL <raw-url> | sudo bash
 #   curl -fsSL <raw-url> | sudo bash -s -- --version 0.1.0
