@@ -1,0 +1,37 @@
+name: Build
+
+# Builds the wheel the installer installs, for testing on a Pi before cutting a release.
+# Grab the artifact and run: sudo bash install.sh --wheel piscan-*.whl
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install build
+      - run: python -m build --wheel
+      - name: Check the wheel has what the service needs
+        run: |
+          wheel="$(ls dist/*.whl)"
+          contents="$(python -m zipfile -l "$wheel")"
+          for f in piscan/piscan.service piscan/web/templates/index.html piscan/web/static/htmx.min.js piscan/web/static/style.css; do
+            grep -q "$f" <<<"$contents" || { echo "missing from wheel: $f" >&2; exit 1; }
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piscan-${{ github.sha }}
+          path: |
+            dist/*.whl
+            install.sh
+          if-no-files-found: error
