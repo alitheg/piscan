@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "piscan"
+dynamic = ["version"]
+description = "Pulls scans off a Doxie Go X2 and sends them to Paperless-ngx"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "jinja2",
+    "python-multipart",
+    "httpx",
+    "pillow",
+    "img2pdf",
+    "pikepdf",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+piscan = "piscan.cli:main"
+
+[tool.hatch.version]
+path = "src/piscan/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/piscan"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
