@@ -1,0 +1,22 @@
+[Unit]
+Description=piscan - Doxie scans to Paperless-ngx
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=piscan
+Group=piscan
+WorkingDirectory=/var/lib/piscan
+StateDirectory=piscan
+ExecStart=/opt/piscan/venv/bin/piscan serve --config /etc/piscan.toml
+Restart=on-failure
+RestartSec=5
+
+# No further hardening on purpose. Mounting the scanner relies on the setuid
+# mount/umount binaries and the fstab "user" option, so NoNewPrivileges is out.
+# Anything that gives the service its own mount namespace (ProtectSystem,
+# ProtectHome, PrivateTmp, PrivateDevices, ReadWritePaths...) would hide the
+# mount from everything else, which is a miserable thing to debug.
+
+[Install]
+WantedBy=multi-user.target

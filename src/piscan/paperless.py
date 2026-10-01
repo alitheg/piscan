@@ -77,9 +77,13 @@ class PaperlessClient:
             return TaskResult("failure", error=str(error))
         return TaskResult("pending")
 
+    def verify(self) -> None:
+        """Raise PaperlessError (with a readable reason) unless the token is accepted."""
+        self._request("GET", "/api/")
+
     def ping(self) -> bool:
         try:
-            self._request("GET", "/api/")
+            self.verify()
         except PaperlessError:
             return False
         return True
