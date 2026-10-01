@@ -278,13 +278,16 @@ class Store:
             rows = [self._require_draft(db, i) for i in ids]
             for r in rows:
                 self._require_editable(r)
-            target = min(rows, key=lambda r: (r["created_at"], r["id"]))["id"]
-            marks = ",".join("?" * len(ids))
+            rows.sort(key=lambda r: (r["created_at"], r["id"]))
+            target = rows[0]["id"]
+            # Drafts in arrival order, each keeping its own page order (which
+            # the user may have changed).
             ordered = [
-                r["id"]
-                for r in db.execute(
-                    f"SELECT id FROM pages WHERE draft_id IN ({marks}) ORDER BY arrived_at, id",
-                    ids,
+                p["id"]
+                for r in rows
+                for p in db.execute(
+                    "SELECT id FROM pages WHERE draft_id=? ORDER BY position, id",
+                    (r["id"],),
                 )
             ]
             for pos, pid in enumerate(ordered):

@@ -15,6 +15,9 @@ set -euo pipefail
 
 REPO="alitheg/piscan"
 VENV_DIR="/opt/piscan/venv"
+# sha256 of the last wheel installed, so a rebuilt wheel with the same version
+# still gets installed.
+WHEEL_SHA_FILE="/opt/piscan/installed-wheel.sha256"
 CONFIG="/etc/piscan.toml"
 UNIT_DEST="/etc/systemd/system/piscan.service"
 DATA_DIR="/var/lib/piscan"
@@ -198,9 +201,15 @@ install_package() {
         changed "created virtualenv $VENV_DIR"
     fi
 
-    local current
+    local current wheel_sha=""
     current="$(installed_version)"
-    if [[ "$current" == "$TARGET_VERSION" ]]; then
+    if [[ -n "$LOCAL_WHEEL" ]]; then
+        wheel_sha="$(sha256sum "$WHEEL_PATH" | cut -d' ' -f1)"
+    fi
+    # A release wheel is fixed per version. A local one (a test build) may be
+    # rebuilt without a version bump, so it must also match what was installed.
+    if [[ "$current" == "$TARGET_VERSION" ]] \
+        && { [[ -z "$wheel_sha" ]] || [[ "$(cat "$WHEEL_SHA_FILE" 2>/dev/null)" == "$wheel_sha" ]]; }; then
         log "piscan $current is already installed, skipping pip"
         return 0
     fi
@@ -211,12 +220,25 @@ install_package() {
         curl -fsSL "$WHEEL_URL" -o "$WHEEL_PATH" \
             || die "could not download $WHEEL_URL (does that release exist?)"
     fi
+    local pip=("$VENV_DIR/bin/pip" install --quiet --disable-pip-version-check --prefer-binary)
     log "Installing piscan $TARGET_VERSION"
-    "$VENV_DIR/bin/pip" install --quiet --disable-pip-version-check \
-        --upgrade --prefer-binary "$WHEEL_PATH" </dev/null
+    if [[ "$current" == "$TARGET_VERSION" ]]; then
+        # pip won't replace an installed version with the same one unless forced.
+        # --no-deps keeps it from reinstalling every dependency too; the second
+        # call then picks up any dependency the new build added.
+        "${pip[@]}" --force-reinstall --no-deps "$WHEEL_PATH" </dev/null
+    fi
+    "${pip[@]}" --upgrade "$WHEEL_PATH" </dev/null
+    if [[ -n "$wheel_sha" ]]; then
+        printf '%s\n' "$wheel_sha" >"$WHEEL_SHA_FILE"
+    else
+        rm -f "$WHEEL_SHA_FILE"
+    fi
     PKG_CHANGED=1
     if [[ -z "$current" ]]; then
         changed "installed piscan $TARGET_VERSION"
+    elif [[ "$current" == "$TARGET_VERSION" ]]; then
+        changed "reinstalled piscan $TARGET_VERSION from a different wheel"
     else
         changed "changed piscan $current -> $TARGET_VERSION"
     fi

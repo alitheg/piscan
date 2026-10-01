@@ -125,6 +125,21 @@ def test_merge_moves_pages_into_earliest_draft_by_arrival(store):
     assert len(store.list_drafts(["inbox"])) == 1
 
 
+def test_merge_keeps_each_drafts_page_order(store):
+    a, b, c = add(store, 1), add(store, 2), add(store, 3)
+    t = store.merge([a.draft_id, b.draft_id])
+    store.move_page(b.id, -1)
+    t = store.merge([t, c.draft_id])
+    assert [p.id for p in store.get_draft(t).pages] == [b.id, a.id, c.id]
+
+
+def test_merge_appends_drafts_in_arrival_order_without_interleaving(store):
+    a, b, c = add(store, 1), add(store, 2), add(store, 3)
+    ac = store.merge([a.draft_id, c.draft_id])
+    t = store.merge([b.draft_id, ac])
+    assert [p.id for p in store.get_draft(t).pages] == [a.id, c.id, b.id]
+
+
 def test_merge_validation(store):
     a, b = add(store, 1), add(store, 2)
     with pytest.raises(ValueError):

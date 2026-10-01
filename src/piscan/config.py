@@ -19,6 +19,9 @@ class Config:
     mountpoint: Path = Path("/mnt/doxie")
     web_port: int = 8080
     data_dir: Path = Path("/var/lib/piscan")
+    # Extra names the web UI answers to, beyond the Pi's hostname, hostname.local,
+    # localhost and any IP address.
+    allowed_hosts: tuple[str, ...] = ()
 
 
 def load_config(path: Path) -> Config:
@@ -40,11 +43,18 @@ def load_config(path: Path) -> Config:
 
     defaults = Config(paperless_url="", paperless_token="")
     scanner = raw.get("scanner", {})
+    web = raw.get("web", {})
+    allowed_hosts = web.get("allowed_hosts", [])
+    if not isinstance(allowed_hosts, list) or not all(
+        isinstance(h, str) for h in allowed_hosts
+    ):
+        raise ConfigError(f"{path}: [web] allowed_hosts must be a list of strings")
     return Config(
         paperless_url=url.rstrip("/"),
         paperless_token=token,
         scanner_device=Path(scanner.get("device", defaults.scanner_device)),
         mountpoint=Path(scanner.get("mountpoint", defaults.mountpoint)),
-        web_port=raw.get("web", {}).get("port", defaults.web_port),
+        web_port=web.get("port", defaults.web_port),
         data_dir=Path(raw.get("storage", {}).get("data_dir", defaults.data_dir)),
+        allowed_hosts=tuple(allowed_hosts),
     )

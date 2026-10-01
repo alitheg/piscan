@@ -56,7 +56,7 @@ curl -fsSL GIST_URL | sudo bash -s -- --version 0.1.0
 ```
 
 - `--version X.Y.Z` installs that release instead of the latest. This is also how you roll back.
-- `--wheel PATH` installs a local wheel instead of downloading one (for testing).
+- `--wheel PATH` installs a local wheel instead of downloading one (for testing). A rebuilt wheel is installed even if its version matches what is already there.
 - `--no-systemd` skips the systemctl calls and the final check (for container tests).
 
 ## Where things live
@@ -101,6 +101,13 @@ After editing the config, run `sudo systemctl restart piscan`. To test the confi
 `piscan serve --config PATH` is what the service runs. `--config` defaults to `/etc/piscan.toml`.
 
 The web UI listens on the configured port (8080 by default) on all interfaces. The installer prints `http://<hostname>.local:8080/` when it finishes.
+
+To block DNS-rebinding attacks from web pages open on your network, the UI only answers requests addressed to an IP address, the Pi's hostname, `<hostname>.local` or `localhost`. Any other name gets a 400. If you reach it under another name (a DNS entry or a reverse proxy), add that name to `[web]`:
+
+```
+[web]
+allowed_hosts = ["scanner.home.lan"]
+```
 
 ## Troubleshooting
 
