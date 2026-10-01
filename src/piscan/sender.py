@@ -13,6 +13,14 @@ log = logging.getLogger(__name__)
 _TIMEOUT_MESSAGE = "unknown - check Paperless"
 
 
+def _timeout_message(last_error: str | None) -> str:
+    # Never "can't reach Paperless" here: the upload worked, and that wording
+    # invites a duplicate retry.
+    if last_error:
+        return f"{_TIMEOUT_MESSAGE} [{last_error}]"
+    return _TIMEOUT_MESSAGE
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -35,8 +43,8 @@ class Sender:
         self._stop = threading.Event()
         # Returns True when asked to stop, like Event.wait.
         self._sleep = sleep or self._stop.wait
-        # (draft id, resume): resume polls an existing task, otherwise upload afresh.
-        self._queue: queue.Queue[tuple[int, bool]] = queue.Queue()
+        # Draft ids. A task id in the store means "already uploaded, keep polling".
+        self._queue: queue.Queue[int] = queue.Queue()
         self._health: bool | None = None
 
     # -- queueing ----------------------------------------------------------
@@ -51,15 +59,15 @@ class Sender:
         draft = self.store.get_draft(draft_id)
         if draft.status != required:
             raise ValueError(f"draft {draft_id} is {draft.status}, not {required}")
-        # Marked before queuing so the UI shows it straight away. A retried draft
-        # keeps its old task id in the store, so the queue entry says "upload afresh".
+        # Marked before queuing so the UI shows it straight away. set_sending
+        # clears any old task id, so a restart before the upload re-queues to inbox.
         self.store.set_sending(draft_id)
-        self._queue.put((draft_id, False))
+        self._queue.put(draft_id)
 
     def recover(self) -> None:
         for draft in self.store.list_drafts(["sending"]):
             if draft.paperless_task_id:
-                self._queue.put((draft.id, True))
+                self._queue.put(draft.id)
             else:
                 self.store.reset_to_inbox(draft.id)
 
@@ -85,13 +93,13 @@ class Sender:
     def process_one(self, timeout: float | None = None) -> bool:
         try:
             if timeout is None:
-                draft_id, resume = self._queue.get_nowait()
+                draft_id = self._queue.get_nowait()
             else:
-                draft_id, resume = self._queue.get(timeout=timeout)
+                draft_id = self._queue.get(timeout=timeout)
         except queue.Empty:
             return False
         try:
-            self._send(draft_id, resume)
+            self._send(draft_id)
         except Exception as e:
             log.exception("sending draft %s failed", draft_id)
             self._fail(draft_id, f"unexpected error: {e}")
@@ -100,11 +108,11 @@ class Sender:
     def _fail(self, draft_id: int, error: str) -> None:
         self.store.mark_failed(draft_id, error)
 
-    def _send(self, draft_id: int, resume: bool) -> None:
+    def _send(self, draft_id: int) -> None:
         draft = self.store.get_draft(draft_id)
         if draft.status != "sending":
             return  # changed under us; nothing to do
-        if resume and draft.paperless_task_id:
+        if draft.paperless_task_id:
             task_id = draft.paperless_task_id
         else:
             try:
@@ -135,7 +143,7 @@ class Sender:
                     self._fail(draft_id, result.error or "Paperless rejected the document")
                     return
             if self.clock() >= deadline:
-                self._fail(draft_id, poll_error or _TIMEOUT_MESSAGE)
+                self._fail(draft_id, _timeout_message(poll_error))
                 return
             if self._sleep(self.poll_interval):
                 # Shutting down: stays "sending" with its task id, recover() resumes.

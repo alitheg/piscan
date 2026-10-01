@@ -366,7 +366,8 @@ class Store:
         with self._tx() as db:
             self._require_draft(db, draft_id)
             db.execute(
-                "UPDATE drafts SET status=?, error=NULL WHERE id=?", (SENDING, draft_id)
+                "UPDATE drafts SET status=?, error=NULL, paperless_task_id=NULL WHERE id=?",
+                (SENDING, draft_id),
             )
 
     def set_task(self, draft_id: int, task_id: str) -> None:

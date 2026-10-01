@@ -1,4 +1,5 @@
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -159,8 +160,44 @@ def test_poll_connection_errors_until_timeout(store, client, sender):
     sender.enqueue(d)
     sender.process_one()
     got = store.get_draft(d)
-    assert (got.status, got.error) == ("failed", "can't reach Paperless")
+    assert got.status == "failed"
+    assert got.error == "unknown - check Paperless [can't reach Paperless]"
     assert pages_exist(store, d)
+
+
+def test_retry_then_restart_does_not_poll_old_task(store, client, clock, sender):
+    d = make_draft(store)
+    client.results = [TaskResult("failure", error="duplicate")]
+    sender.enqueue(d)
+    sender.process_one()
+    sender.retry(d)
+    polls = client.polls
+
+    fresh = Sender(store, client, clock=clock, sleep=clock.sleep)
+    fresh.recover()
+    assert store.get_draft(d).status == "inbox"
+    assert fresh.process_one() is False
+    assert client.polls == polls
+
+
+def test_run_processes_a_draft(store, client):
+    d = make_draft(store)
+    client.results = [TaskResult("success", document_id=4)]
+    s = Sender(store, client)
+    stop = threading.Event()
+    t = threading.Thread(target=s.run, args=(stop,))
+    s.enqueue(d)
+    t.start()
+    try:
+        for _ in range(200):
+            if store.get_draft(d).status == "sent":
+                break
+            time.sleep(0.05)
+    finally:
+        stop.set()
+        t.join(timeout=5)
+    assert not t.is_alive()
+    assert store.get_draft(d).status == "sent"
 
 
 def test_enqueue_and_retry_state_checks(store, sender):

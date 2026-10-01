@@ -395,3 +395,13 @@ def test_non_utc_datetimes_normalised(store):
         later.draft_id,
     ]
     assert earlier.arrived_at == datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
+
+
+def test_set_sending_clears_old_task_id(store):
+    t = add(store, 1).draft_id
+    store.set_sending(t)
+    store.set_task(t, "old")
+    store.mark_failed(t, "nope")
+    store.set_sending(t)
+    d = store.get_draft(t)
+    assert d.status == "sending" and d.paperless_task_id is None and d.error is None
