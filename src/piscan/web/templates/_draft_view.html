@@ -1,0 +1,26 @@
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<p class="meta">
+  <span>{{ draft.pages|length }} page{{ '' if draft.pages|length == 1 else 's' }}</span>
+  <span>{{ draft.created_at|clock }}</span>
+  {% if draft.status != 'inbox' %}<span class="state-{{ draft.status }}">{{ draft.status }}</span>{% endif %}
+</p>
+{% if draft.status == 'failed' and draft.error %}<p class="error">{{ draft.error }}</p>{% endif %}
+{% set editable = draft.status in ('inbox', 'failed') %}
+{% if editable %}<p class="hint">Tap a page to rotate it.</p>{% endif %}
+<div class="pages">
+{% for p in draft.pages %}
+  <div class="page">
+    <div class="page-img"{% if editable %} hx-post="/pages/{{ p.id }}/rotate" hx-target="#draft-view" hx-swap="innerHTML"{% endif %}>
+      {% if editable %}<img src="/pages/{{ p.id }}/image" alt="Page {{ loop.index }}" loading="lazy" style="transform: rotate({{ p.rotation }}deg)">{% else %}Page {{ loop.index }}{% endif %}
+    </div>
+    {% if editable %}
+    <div class="page-tools">
+      <button class="btn" type="button" hx-post="/pages/{{ p.id }}/up" hx-target="#draft-view" hx-swap="innerHTML" aria-label="Move up"{% if loop.first %} disabled{% endif %}>&uarr;</button>
+      <button class="btn" type="button" hx-post="/pages/{{ p.id }}/down" hx-target="#draft-view" hx-swap="innerHTML" aria-label="Move down"{% if loop.last %} disabled{% endif %}>&darr;</button>
+      <button class="btn" type="button" hx-post="/pages/{{ p.id }}/split" hx-target="#draft-view" hx-swap="innerHTML"{% if draft.pages|length < 2 %} disabled{% endif %}>Split</button>
+      <button class="btn danger" type="button" hx-post="/pages/{{ p.id }}/delete" hx-target="#draft-view" hx-swap="innerHTML" hx-confirm="Delete this page?">Delete</button>
+    </div>
+    {% endif %}
+  </div>
+{% endfor %}
+</div>

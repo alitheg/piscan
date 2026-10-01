@@ -1,0 +1,42 @@
+{% if error %}<p class="notice" role="alert">{{ error }}</p>{% endif %}
+<form>
+{% for d in drafts %}
+  <div class="card">
+    <label class="pick-wrap">
+      <input class="pick" type="checkbox" name="draft_id" value="{{ d.id }}" aria-label="Select draft {{ d.id }}"{% if d.status == 'sending' %} disabled{% endif %}>
+    </label>
+    <a class="thumbs" href="/drafts/{{ d.id }}" aria-label="Open draft {{ d.id }}">
+      {% for p in d.pages[:4] %}
+        <span class="thumb"><img src="/pages/{{ p.id }}/thumb" alt="" loading="lazy" style="transform: rotate({{ p.rotation }}deg)"></span>
+      {% endfor %}
+      {% if d.pages|length > 4 %}<span class="thumb">+{{ d.pages|length - 4 }}</span>{% endif %}
+    </a>
+    <div class="meta">
+      <span>{{ d.pages|length }} page{{ '' if d.pages|length == 1 else 's' }}</span>
+      <span>{{ d.created_at|clock }}</span>
+      {% if d.status == 'sending' %}<span class="state-sending">sending</span>{% endif %}
+      {% if d.status == 'failed' %}<span class="state-failed">failed</span>{% endif %}
+    </div>
+    {% if d.status == 'failed' and d.error %}<p class="error">{{ d.error }}</p>{% endif %}
+    <div class="card-actions">
+      {% if d.status == 'inbox' %}
+        <button class="btn primary" type="button" hx-post="/drafts/{{ d.id }}/send" hx-target="#drafts" hx-swap="innerHTML">Send</button>
+      {% elif d.status == 'failed' %}
+        <button class="btn primary" type="button" hx-post="/drafts/{{ d.id }}/retry" hx-target="#drafts" hx-swap="innerHTML">Retry</button>
+      {% endif %}
+      <a class="btn" href="/drafts/{{ d.id }}">Pages</a>
+    </div>
+  </div>
+{% else %}
+  <p class="empty">No drafts. Scan something.</p>
+{% endfor %}
+  <div class="bar"><div class="bar-inner">
+    <div class="selection">
+      <button class="btn" type="button" hx-post="/merge" hx-target="#drafts" hx-swap="innerHTML">Merge selected</button>
+      <button class="btn danger" type="button" hx-post="/delete" hx-target="#drafts" hx-swap="innerHTML" hx-confirm="Delete the selected drafts and their pages?">Delete</button>
+    </div>
+    {% if drafts|selectattr('status', 'equalto', 'inbox')|list %}
+      <button class="btn primary" type="button" hx-post="/send-all" hx-target="#drafts" hx-swap="innerHTML">Send all</button>
+    {% endif %}
+  </div></div>
+</form>

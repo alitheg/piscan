@@ -1,0 +1,9 @@
+<span class="scanner{% if scanner.state.value == 'problem' %} problem{% endif %}">
+  <span class="dot {{ 'dot-ok' if scanner.state.value == 'ready' else ('dot-bad' if scanner.state.value == 'problem' else 'dot-grey') }}"></span>
+  {{ scanner_text }}
+</span>
+<span class="paperless" title="Paperless">
+  <span class="dot {{ 'dot-ok' if paperless is true else ('dot-bad' if paperless is false else 'dot-grey') }}"></span>
+  Paperless
+</span>
+<span class="count">{{ draft_count }} draft{{ '' if draft_count == 1 else 's' }}</span>

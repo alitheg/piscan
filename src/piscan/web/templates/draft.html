@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Draft {{ draft.id }} - piscan{% endblock %}
+{% block body %}
+<div class="topbar"><a class="btn" href="/">&larr; Drafts</a><span>Draft {{ draft.id }}</span></div>
+<main id="draft-view">
+{% include "_draft_view.html" %}
+</main>
+{% endblock %}

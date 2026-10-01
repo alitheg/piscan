@@ -1,0 +1,12 @@
+{% for d in sent %}
+  <div class="sent-row">
+    {% if d.paperless_document_id is not none %}
+      <a href="{{ paperless_url }}/documents/{{ d.paperless_document_id }}/details">Document {{ d.paperless_document_id }}</a>
+    {% else %}
+      <span>Sent</span>
+    {% endif %}
+    <span>{{ d.pages|length }} page{{ '' if d.pages|length == 1 else 's' }}, {{ d.sent_at|clock if d.sent_at else '' }}</span>
+  </div>
+{% else %}
+  <div class="sent-row"><span>Nothing sent in the last 24 hours.</span></div>
+{% endfor %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block body %}
+<header id="status" hx-get="/fragments/status" hx-trigger="every 2s" hx-swap="innerHTML">
+{% include "_status.html" %}
+</header>
+<main>
+  {# Polling pauses while anything is ticked, otherwise the swap would clear the ticks. #}
+  <div id="drafts" hx-get="/fragments/drafts" hx-trigger="every 2s [!document.querySelector('.pick:checked')]" hx-swap="innerHTML">
+  {% include "_drafts.html" %}
+  </div>
+  <details>
+    <summary>Recently sent (24 h)</summary>
+    <div id="sent" hx-get="/fragments/sent" hx-trigger="every 10s" hx-swap="innerHTML">
+    {% include "_sent.html" %}
+    </div>
+  </details>
+</main>
+{% endblock %}
