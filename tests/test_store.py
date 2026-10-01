@@ -1,7 +1,7 @@
 import hashlib
 import random
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -338,3 +338,60 @@ def test_random_operations_never_lose_or_duplicate_pages(store, seed):
             assert d.pages, "empty draft left behind"
             assert [p.position for p in d.pages] == list(range(len(d.pages)))
             assert all(p.path.exists() for p in d.pages)
+
+
+@pytest.mark.parametrize("state", ["sending", "sent"])
+def test_user_edits_refused_unless_inbox_or_failed(store, state):
+    a, b = add(store, 1), add(store, 2)
+    t = store.merge([a.draft_id, b.draft_id])
+    if state == "sending":
+        store.set_sending(t)
+    else:
+        store.mark_sent(t, 1, T0)
+    for call in (
+        lambda: store.split(a.id),
+        lambda: store.move_page(a.id, 1),
+        lambda: store.rotate(a.id),
+        lambda: store.delete_page(a.id),
+        lambda: store.delete_draft(t),
+    ):
+        with pytest.raises(ValueError):
+            call()
+    d = store.get_draft(t)
+    assert [p.id for p in d.pages] == [a.id, b.id]
+    assert d.pages[0].rotation == 0
+
+
+def test_failed_draft_is_editable(store):
+    a, b = add(store, 1), add(store, 2)
+    t = store.merge([a.draft_id, b.draft_id])
+    store.mark_failed(t, "x")
+    store.rotate(a.id)
+    store.split(b.id)
+
+
+def test_naive_datetimes_rejected(store):
+    naive = T0.replace(tzinfo=None)
+    tmp, sha = make_scan(store, 1)
+    with pytest.raises(ValueError):
+        store.add_page(tmp, sha, naive)
+    assert not store.has_sha(sha)
+    p = add(store, 2)
+    with pytest.raises(ValueError):
+        store.mark_sent(p.draft_id, 1, naive)
+    with pytest.raises(ValueError):
+        store.purge_sent(timedelta(hours=1), naive)
+
+
+def test_non_utc_datetimes_normalised(store):
+    plus2 = timezone(timedelta(hours=2))
+    # 10:00+02:00 is 08:00 UTC, earlier than 09:00 UTC despite the larger clock reading.
+    tmp1, sha1 = make_scan(store, 1)
+    tmp2, sha2 = make_scan(store, 2)
+    later = store.add_page(tmp1, sha1, T0)
+    earlier = store.add_page(tmp2, sha2, datetime(2026, 10, 1, 10, 0, tzinfo=plus2))
+    assert [d.id for d in store.list_drafts(["inbox"])] == [
+        earlier.draft_id,
+        later.draft_id,
+    ]
+    assert earlier.arrived_at == datetime(2026, 10, 1, 8, 0, tzinfo=UTC)

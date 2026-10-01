@@ -10,7 +10,7 @@ import threading
 import uuid
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from PIL import Image
@@ -80,7 +80,10 @@ def _unlink(*paths: Path) -> None:
 
 
 def _iso(dt: datetime) -> str:
-    return dt.isoformat()
+    # Always UTC so the SQL string ordering matches chronological ordering.
+    if dt.tzinfo is None:
+        raise ValueError("naive datetime; use timezone-aware UTC")
+    return dt.astimezone(UTC).isoformat()
 
 
 class Store:
@@ -107,7 +110,11 @@ class Store:
             except BaseException:
                 self._db.execute("ROLLBACK")
                 raise
-            self._db.execute("COMMIT")
+            try:
+                self._db.execute("COMMIT")
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
 
     # -- row helpers -------------------------------------------------------
 
@@ -239,6 +246,19 @@ class Store:
 
     # -- editing -----------------------------------------------------------
 
+    @staticmethod
+    def _require_editable(draft_row: sqlite3.Row) -> None:
+        # The sender reads sending drafts' files, and sent drafts have none.
+        if draft_row["status"] not in (INBOX, FAILED):
+            raise ValueError(
+                f"draft {draft_row['id']} is {draft_row['status']}, cannot edit"
+            )
+
+    def _editable_page(self, db: sqlite3.Connection, page_id: int) -> sqlite3.Row:
+        page = self._require_page(db, page_id)
+        self._require_editable(self._require_draft(db, page["draft_id"]))
+        return page
+
     def merge(self, draft_ids: list[int]) -> int:
         ids = list(dict.fromkeys(draft_ids))
         if len(ids) < 2:
@@ -246,8 +266,7 @@ class Store:
         with self._tx() as db:
             rows = [self._require_draft(db, i) for i in ids]
             for r in rows:
-                if r["status"] not in (INBOX, FAILED):
-                    raise ValueError(f"draft {r['id']} is {r['status']}, cannot merge")
+                self._require_editable(r)
             target = min(rows, key=lambda r: (r["created_at"], r["id"]))["id"]
             marks = ",".join("?" * len(ids))
             ordered = [
@@ -274,7 +293,7 @@ class Store:
 
     def split(self, page_id: int) -> int:
         with self._tx() as db:
-            page = self._require_page(db, page_id)
+            page = self._editable_page(db, page_id)
             count = db.execute(
                 "SELECT COUNT(*) FROM pages WHERE draft_id=?", (page["draft_id"],)
             ).fetchone()[0]
@@ -295,7 +314,7 @@ class Store:
         if delta not in (-1, 1):
             raise ValueError("delta must be -1 or +1")
         with self._tx() as db:
-            page = self._require_page(db, page_id)
+            page = self._editable_page(db, page_id)
             other = db.execute(
                 "SELECT id, position FROM pages WHERE draft_id=? AND position=?",
                 (page["draft_id"], page["position"] + delta),
@@ -312,14 +331,14 @@ class Store:
 
     def rotate(self, page_id: int) -> None:
         with self._tx() as db:
-            self._require_page(db, page_id)
+            self._editable_page(db, page_id)
             db.execute(
                 "UPDATE pages SET rotation=(rotation + 90) % 360 WHERE id=?", (page_id,)
             )
 
     def delete_page(self, page_id: int) -> None:
         with self._tx() as db:
-            page = self._require_page(db, page_id)
+            page = self._editable_page(db, page_id)
             db.execute("DELETE FROM pages WHERE id=?", (page_id,))
             remaining = db.execute(
                 "SELECT COUNT(*) FROM pages WHERE draft_id=?", (page["draft_id"],)
@@ -333,7 +352,7 @@ class Store:
 
     def delete_draft(self, draft_id: int) -> None:
         with self._tx() as db:
-            self._require_draft(db, draft_id)
+            self._require_editable(self._require_draft(db, draft_id))
             pages = db.execute(
                 "SELECT * FROM pages WHERE draft_id=?", (draft_id,)
             ).fetchall()
@@ -391,13 +410,13 @@ class Store:
             )
 
     def purge_sent(self, older_than: timedelta, now: datetime) -> None:
-        cutoff = now - older_than
+        cutoff = _iso(now - older_than)
         with self._tx() as db:
             rows = db.execute(
                 "SELECT id, sent_at FROM drafts WHERE status=?", (SENT,)
             ).fetchall()
             for r in rows:
-                if r["sent_at"] and datetime.fromisoformat(r["sent_at"]) < cutoff:
+                if r["sent_at"] and r["sent_at"] < cutoff:
                     db.execute("DELETE FROM drafts WHERE id=?", (r["id"],))
 
     def free_bytes(self) -> int:
