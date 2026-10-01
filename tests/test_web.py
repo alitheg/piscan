@@ -104,6 +104,7 @@ def test_thumbs_rotated_with_css(client, store):
         (ScannerStatus(ScannerState.OFF, ""), "Scanner off / unplugged"),
         (ScannerStatus(ScannerState.SCANNING, ""), "Scanning..."),
         (ScannerStatus(ScannerState.IMPORTING, "", 2, 5), "Importing... 2 of 5"),
+        (ScannerStatus(ScannerState.IMPORTING, "", 0, 0), "Importing..."),
         (ScannerStatus(ScannerState.READY, ""), "Ready"),
         (ScannerStatus(ScannerState.PROBLEM, "won't mount"), "Problem: won&#39;t mount"),
     ],
@@ -311,3 +312,66 @@ def test_recently_sent_links_to_paperless(client, store):
 def test_polling_pauses_while_ticked(client):
     # Ticks live in the DOM, so the poll trigger must be conditional on them.
     assert ".pick:checked" in client.get("/").text
+
+
+def test_importing_with_no_total_has_no_counts(client, state):
+    state["scanner"] = ScannerStatus(ScannerState.IMPORTING, "", 0, 0)
+    assert "0 of 0" not in client.get("/fragments/status").text
+
+
+def test_real_ingest_problem_renders_with_one_prefix(store, sender, tmp_path):
+    from piscan.ingest import Ingest, MountError
+
+    class Probe:
+        def present(self):
+            return True
+
+        def size(self):
+            return 1000
+
+    class Mounter:
+        mountpoint = tmp_path
+
+        def mount(self):
+            raise MountError("mount failed: wrong fs type")
+
+    ing = Ingest(Probe(), Mounter(), store)
+    ing.tick()
+    app = create_app(store, sender, ing.status, lambda: True, "http://p/")
+    text = TestClient(app).get("/fragments/status").text
+    assert "Problem: mount failed: wrong fs type" in text
+    assert "Problem: Problem" not in text
+
+
+# -- same-origin guard --------------------------------------------------------
+
+
+def test_same_origin_post_works(client, store):
+    add(store, 1)
+    r = client.post("/send-all", headers={"Origin": "http://testserver"})
+    assert r.status_code == 303
+
+
+def test_cross_origin_post_is_refused(client, store):
+    add(store, 1)
+    r = client.post("/send-all", headers={"Origin": "http://evil.example"})
+    assert r.status_code == 403
+    assert ids(store) != []  # nothing was sent
+
+
+def test_cross_site_fetch_metadata_is_refused(client):
+    r = client.post("/send-all", headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+
+
+def test_same_origin_fetch_metadata_works(client):
+    r = client.post("/send-all", headers={"Sec-Fetch-Site": "same-origin"})
+    assert r.status_code == 303
+
+
+def test_post_without_origin_works(client):
+    assert client.post("/send-all").status_code == 303
+
+
+def test_get_ignores_origin(client):
+    assert client.get("/", headers={"Origin": "http://evil.example"}).status_code == 200

@@ -1,4 +1,5 @@
 import hashlib
+import os
 import random
 import threading
 from datetime import UTC, datetime, timedelta, timezone
@@ -405,3 +406,23 @@ def test_set_sending_clears_old_task_id(store):
     store.set_sending(t)
     d = store.get_draft(t)
     assert d.status == "sending" and d.paperless_task_id is None and d.error is None
+
+
+def test_add_page_fsyncs_pages_dir_after_commit(tmp_path, monkeypatch):
+    from PIL import Image
+
+    store = Store(tmp_path / "data")
+    tmp = store.new_tmp_path()
+    Image.new("RGB", (50, 50)).save(tmp, "JPEG")
+    synced = []
+    real = os.fsync
+    dir_inodes = {os.stat(store.pages_dir).st_ino}
+
+    def spy(fd):
+        if os.fstat(fd).st_ino in dir_inodes:
+            synced.append(fd)
+        return real(fd)
+
+    monkeypatch.setattr(os, "fsync", spy)
+    assert store.add_page(tmp, "a" * 64, datetime.now(UTC)) is not None
+    assert len(synced) == 1

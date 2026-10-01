@@ -435,8 +435,9 @@ main() {
 
     check_system
     resolve_wheel
-    install_package
+    # Before install_package, which creates the mountpoint a hand-edited config names.
     load_config_values
+    install_package
     ensure_fstab
     ensure_config
     # The config may have just been created, so read it again.

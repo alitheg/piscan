@@ -90,6 +90,8 @@ data_dir = "/var/lib/piscan"
 
 The values shown for `[scanner]`, `[web]` and `[storage]` are the defaults. The installer's `fstab` line is matched on the full `device` path, so a random USB stick never matches. If you change `device` or `mountpoint` by hand, re-run the installer so the `fstab` line follows.
 
+The systemd unit and the installer assume `data_dir` is `/var/lib/piscan`. If you point it somewhere else, create that directory and `chown` it to the `piscan` user by hand.
+
 After editing the config, run `sudo systemctl restart piscan`. To test the config and the Paperless token without restarting anything:
 
 ```
@@ -119,6 +121,7 @@ If Paperless is unreachable, the send fails with "can't reach Paperless" and off
 Manual, on a real Zero and Doxie:
 
 - [ ] Several scans, checking the *Scanning...* signal each time, including scans in quick succession
+- [ ] Scan several pages in quick succession, then check the scanner's flash is empty after the last one
 - [ ] Start a scan during an import
 - [ ] Reboot mid-import
 - [ ] End to end to Paperless, including a merged multi-page document and rotated pages

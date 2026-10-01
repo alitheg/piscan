@@ -1,4 +1,5 @@
 import io
+import time
 
 import pikepdf
 from PIL import Image
@@ -23,3 +24,12 @@ def test_pages_rotation_and_untouched_images(tmp_path):
         for page, src in zip(pdf.pages, [a, b, c], strict=True):
             (img,) = page.Resources.XObject.values()
             assert img.read_raw_bytes() == src.read_bytes()
+
+
+def test_same_input_gives_identical_bytes(tmp_path):
+    a = jpeg(tmp_path, "a.jpg", (300, 200), (200, 10, 10))
+    b = jpeg(tmp_path, "b.jpg", (200, 300), (10, 200, 10))
+    first = build_pdf([(a, 0), (b, 90)])
+    time.sleep(1.1)  # a timestamp in the output would show by now
+    assert build_pdf([(a, 0), (b, 90)]) == first
+    assert build_pdf([(a, 0), (b, 180)]) != first

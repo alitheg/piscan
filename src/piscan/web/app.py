@@ -6,9 +6,16 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -37,6 +44,8 @@ def scanner_text(s: ScannerStatus) -> str:
         case ScannerState.SCANNING:
             return "Scanning..."
         case ScannerState.IMPORTING:
+            if not s.total:
+                return "Importing..."
             return f"Importing... {s.done} of {s.total}"
         case ScannerState.READY:
             return "Ready"
@@ -52,6 +61,19 @@ def create_app(
     paperless_url: str,
 ) -> FastAPI:
     app = FastAPI(title="piscan", docs_url=None, redoc_url=None, openapi_url=None)
+    @app.middleware("http")
+    async def same_origin_only(request: Request, call_next):
+        # Cheap CSRF / DNS-rebinding guard. Requests with neither header (curl, old
+        # browsers) pass.
+        if request.method == "POST":
+            origin = request.headers.get("origin")
+            cross_site = request.headers.get("sec-fetch-site") == "cross-site"
+            if origin is not None and urlsplit(origin).netloc != request.headers.get("host"):
+                cross_site = True
+            if cross_site:
+                return PlainTextResponse("Cross-site request refused", status_code=403)
+        return await call_next(request)
+
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
     templates.env.filters["clock"] = clock

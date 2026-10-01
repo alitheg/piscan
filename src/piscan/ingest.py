@@ -13,6 +13,7 @@ import logging
 import os
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,6 +25,7 @@ log = logging.getLogger(__name__)
 
 CHUNK = 1024 * 1024
 MIN_FREE = 100 * 1024 * 1024
+RETRY_INTERVAL = 60.0
 
 
 class ScannerState(enum.Enum):
@@ -255,15 +257,22 @@ class Ingest:
         mounter: Mounter,
         store: Store,
         interval: float = 2.0,
+        retry_interval: float = RETRY_INTERVAL,
+        monotonic: Callable[[], float] = time.monotonic,
     ):
         self.probe = probe
         self.mounter = mounter
         self.store = store
         self.interval = interval
+        self.retry_interval = retry_interval
+        self._monotonic = monotonic
         self._lock = threading.Lock()
         self._status = ScannerStatus(ScannerState.OFF, "Scanner off / unplugged")
         self._last_size: int | None = None  # None means the device was absent last tick
         self._problem: str | None = None
+        # Set after a Pi-side failure (storage full, write error) so the pass is retried on a
+        # timer: nothing else would trigger one, and sending drafts frees the space again.
+        self._retry_at: float | None = None
 
     def status(self) -> ScannerStatus:
         with self._lock:
@@ -277,6 +286,7 @@ class Ingest:
         if not self.probe.present():
             self._last_size = None
             self._problem = None
+            self._retry_at = None
             self._set(ScannerStatus(ScannerState.OFF, "Scanner off / unplugged"))
             return
 
@@ -287,23 +297,22 @@ class Ingest:
             self._set(ScannerStatus(ScannerState.SCANNING, "Scanning..."))
             return
 
-        if previous is None or previous == 0:
+        retry_due = self._retry_at is not None and self._monotonic() >= self._retry_at
+        if previous is None or previous == 0 or retry_due:
             self._do_pass()
         self._set(self._idle_status())
 
     def _idle_status(self) -> ScannerStatus:
         if self._problem:
-            return ScannerStatus(ScannerState.PROBLEM, f"Problem: {self._problem}")
+            return ScannerStatus(ScannerState.PROBLEM, self._problem)
         return ScannerStatus(ScannerState.READY, "Ready")
 
     def _progress(self, done: int, total: int) -> None:
-        self._set(
-            ScannerStatus(
-                ScannerState.IMPORTING, f"Importing... {done} of {total}", done, total
-            )
-        )
+        text = f"Importing... {done} of {total}" if total else "Importing..."
+        self._set(ScannerStatus(ScannerState.IMPORTING, text, done, total))
 
     def _do_pass(self) -> None:
+        self._retry_at = None
         self._set(ScannerStatus(ScannerState.IMPORTING, "Importing..."))
         try:
             self.mounter.mount()
@@ -326,6 +335,12 @@ class Ingest:
             if res.outcome is PassOutcome.MEDIA_LOST:
                 # The scanner likely started a scan mid-pass and the size dip went unseen
                 # because tick() was blocked. Re-arm so the next non-zero tick retries.
+                self._last_size = 0
+            if res.outcome in (PassOutcome.STORAGE_FULL, PassOutcome.PI_WRITE_FAILED):
+                self._retry_at = self._monotonic() + self.retry_interval
+            elif res.outcome is PassOutcome.OK and (res.imported or res.deduped):
+                # A scan written wholly inside this pass never showed as a size dip, so run
+                # one more pass. It stops once a pass finds nothing.
                 self._last_size = 0
             if res.outcome is not PassOutcome.OK:
                 problem = res.message

@@ -211,7 +211,18 @@ class Store:
                 " VALUES (?, ?, 0, ?, ?, 0)",
                 (sha256, str(final), _iso(arrived_at), draft_id),
             )
-            return self._page(self._require_page(db, cur.lastrowid))
+            page = self._page(self._require_page(db, cur.lastrowid))
+        self._fsync_dir(self.pages_dir)
+        return page
+
+    @staticmethod
+    def _fsync_dir(path: Path) -> None:
+        # Makes the rename durable before ingest deletes the scanner's copy.
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
     # -- queries -----------------------------------------------------------
 

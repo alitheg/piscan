@@ -329,21 +329,23 @@ def test_status_transitions(rig, flash, store, tmp_path):
     assert any(s.state is ScannerState.IMPORTING and s.total == 1 for s in states)
     assert states[-1].message == "Importing... 1 of 1"
 
+    ing.tick()  # re-armed by the import: one confirming pass, which finds nothing
+    assert mounter.events == ["mount", "unmount"] * 2
     ing.tick()  # idle, no new pass
-    assert mounter.events == ["mount", "unmount"]
+    assert mounter.events == ["mount", "unmount"] * 2
 
     probe.sectors = 0
     ing.tick()
     assert ing.status().state is ScannerState.SCANNING
     ing.tick()
     assert ing.status().state is ScannerState.SCANNING
-    assert mounter.events == ["mount", "unmount"]
+    assert mounter.events == ["mount", "unmount"] * 2
 
     put(flash, tmp_path, "IMG_0002.JPG", 2)
     probe.sectors = 1000
     ing.tick()  # size returns: pass
     assert ing.status().state is ScannerState.READY
-    assert mounter.events == ["mount", "unmount"] * 2
+    assert mounter.events == ["mount", "unmount"] * 3
     assert len(stored_shas(store)) == 2
 
     probe.is_present = False
@@ -496,3 +498,96 @@ def test_incomplete_check_comes_before_free_space(flash, store, tmp_path):
     (flash / "DOXIE" / "JPEG" / "IMG_0001.JPG").write_bytes(b"\xff\xd8 partial")
     res, _ = run(flash, store, min_free=10**18)
     assert res.outcome is PassOutcome.OK and res.skipped == 1
+
+
+def test_import_rearms_for_one_more_pass(rig, flash, tmp_path):
+    probe, mounter, ing = rig
+    put(flash, tmp_path, "IMG_0001.JPG", 1)
+    probe.is_present = True
+    ing.tick()  # imports one file
+    assert mounter.events == ["mount", "unmount"]
+    put(flash, tmp_path, "IMG_0002.JPG", 2)  # written entirely during the pass
+    ing.tick()  # no size dip seen, but the import re-armed
+    assert mounter.events == ["mount", "unmount"] * 2
+    assert not list((flash / "DOXIE" / "JPEG").iterdir())
+    ing.tick()  # that import re-armed again; this pass finds nothing
+    assert mounter.events == ["mount", "unmount"] * 3
+    ing.tick()  # so it stops
+    assert mounter.events == ["mount", "unmount"] * 3
+
+
+def test_deduped_pass_also_rearms(rig, flash, store, tmp_path):
+    probe, mounter, ing = rig
+    put(flash, tmp_path, "IMG_0001.JPG", 1)
+    run(flash, store)
+    put(flash, tmp_path, "IMG_0001.JPG", 1)  # same content, left behind by a crash
+    probe.is_present = True
+    ing.tick()
+    ing.tick()
+    assert mounter.events == ["mount", "unmount"] * 2
+    ing.tick()
+    assert mounter.events == ["mount", "unmount"] * 2
+
+
+def test_storage_full_retries_on_a_timer_and_recovers(flash, store, tmp_path, monkeypatch):
+    now = [1000.0]
+    probe, mounter = FakeProbe(), FakeMounter(flash)
+    ing = Ingest(probe, mounter, store, retry_interval=60, monotonic=lambda: now[0])
+    put(flash, tmp_path, "IMG_0001.JPG", 1)
+    free = [0]
+    monkeypatch.setattr(store, "free_bytes", lambda: free[0])
+    monkeypatch.setattr(ingest, "run_pass", lambda *a, **k: run_pass(*a, min_free=1, **k))
+    probe.is_present = True
+    ing.tick()
+    assert "storage full" in ing.status().message
+    assert mounter.events == ["mount", "unmount"]
+
+    now[0] += 59
+    ing.tick()  # too soon
+    assert mounter.events == ["mount", "unmount"]
+
+    now[0] += 2
+    ing.tick()  # due, still full: the timer restarts
+    assert mounter.events == ["mount", "unmount"] * 2
+    assert ing.status().state is ScannerState.PROBLEM
+
+    free[0] = 10**9
+    now[0] += 61
+    ing.tick()
+    assert mounter.events == ["mount", "unmount"] * 3
+    assert ing.status().state is ScannerState.READY
+    assert len(stored_shas(store)) == 1
+    now[0] += 600
+    ing.tick()  # the import re-armed once, nothing else is pending
+    ing.tick()
+    assert mounter.events == ["mount", "unmount"] * 4
+
+
+def test_pi_write_failure_also_retries(rig, monkeypatch):
+    probe, mounter, ing = rig
+    now = [0.0]
+    ing._monotonic = lambda: now[0]
+    outcomes = iter([PassOutcome.PI_WRITE_FAILED, PassOutcome.OK])
+    monkeypatch.setattr(
+        ingest, "run_pass", lambda *a, **k: ingest.PassResult(next(outcomes), message="x")
+    )
+    probe.is_present = True
+    ing.tick()
+    now[0] = 61
+    ing.tick()
+    assert mounter.events == ["mount", "unmount"] * 2
+    assert ing.status().state is ScannerState.READY
+
+
+def test_status_message_is_the_bare_reason(rig):
+    probe, mounter, ing = rig
+    mounter.fail_mount = "mount failed: wrong fs type"
+    probe.is_present = True
+    ing.tick()
+    assert ing.status().message == "mount failed: wrong fs type"
+
+
+def test_progress_with_no_files_is_plain(rig):
+    ing = rig[2]
+    ing._progress(0, 0)
+    assert ing.status().message == "Importing..."

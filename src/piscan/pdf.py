@@ -13,10 +13,13 @@ def build_pdf(pages: list[tuple[Path, int]]) -> bytes:
     """
     if not pages:
         raise ValueError("no pages to send")
-    raw = img2pdf.convert([str(p) for p, _ in pages])
+    raw = img2pdf.convert([str(p) for p, _ in pages], nodate=True)
     with pikepdf.open(io.BytesIO(raw)) as pdf:
         for page, (_, rotation) in zip(pdf.pages, pages, strict=True):
             page.Rotate = rotation % 360
+        # Same pages must give the same bytes, or Paperless can't spot a re-send.
+        if "/ID" in pdf.trailer:
+            del pdf.trailer["/ID"]
         out = io.BytesIO()
-        pdf.save(out)
+        pdf.save(out, deterministic_id=True)
     return out.getvalue()
