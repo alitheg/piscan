@@ -83,26 +83,35 @@ class Mounter:
         self._cmd(["mount", str(self.mountpoint)])
 
     def unmount(self) -> None:
-        self._cmd(["sync"])
+        # A failed sync must not stop us trying to unmount.
+        sync_error: MountError | None = None
+        try:
+            self._cmd(["sync"])
+        except MountError as e:
+            log.error("%s", e)
+            sync_error = e
         self._cmd(["umount", str(self.mountpoint)])
+        if sync_error:
+            raise sync_error
 
 
 def is_complete_jpeg(path: Path) -> bool:
-    try:
-        with open(path, "rb") as f:
-            if f.read(2) != b"\xff\xd8":
-                return False
-            f.seek(-2, 2)
-            return f.read(2) == b"\xff\xd9"
-    except OSError:
-        # Seeking before the start of a 0 or 1 byte file lands here too.
-        return False
+    """False for a short or unfinished file. Real I/O errors propagate (media lost)."""
+    with open(path, "rb") as f:
+        if f.seek(0, 2) < 4:
+            return False
+        f.seek(0)
+        if f.read(2) != b"\xff\xd8":
+            return False
+        f.seek(-2, 2)
+        return f.read(2) == b"\xff\xd9"
 
 
 class PassOutcome(enum.Enum):
     OK = "ok"
     STORAGE_FULL = "storage_full"
     MEDIA_LOST = "media_lost"
+    PI_WRITE_FAILED = "pi_write_failed"
 
 
 @dataclass(frozen=True)
@@ -119,6 +128,10 @@ class PassResult:
         return self.outcome is PassOutcome.OK and self.failed == 0
 
 
+class PiWriteError(Exception):
+    """The Pi-side copy failed (disk full, bad SD card), not the scanner media."""
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -128,11 +141,23 @@ def _sha256(path: Path) -> str:
 
 
 def _copy_fsync(src: Path, dst: Path) -> None:
-    with open(src, "rb") as fin, open(dst, "wb") as fout:
-        while chunk := fin.read(CHUNK):
-            fout.write(chunk)
-        fout.flush()
-        os.fsync(fout.fileno())
+    # Source reads raise plain OSError (media lost); destination failures become PiWriteError.
+    with open(src, "rb") as fin:
+        try:
+            fout = open(dst, "wb")  # noqa: SIM115 - closed by the with below
+        except OSError as e:
+            raise PiWriteError(str(e)) from e
+        with fout:
+            while chunk := fin.read(CHUNK):
+                try:
+                    fout.write(chunk)
+                except OSError as e:
+                    raise PiWriteError(str(e)) from e
+            try:
+                fout.flush()
+                os.fsync(fout.fileno())
+            except OSError as e:
+                raise PiWriteError(str(e)) from e
 
 
 def _list_scans(flash_root: Path) -> list[Path]:
@@ -171,10 +196,6 @@ def run_pass(
         return PassResult(outcome, imported, deduped, skipped, failed, message)
 
     for done, src in enumerate(files):
-        if store.free_bytes() < min_free:
-            log.error("Pi storage below %d bytes, stopping pass", min_free)
-            return result(PassOutcome.STORAGE_FULL, "Pi storage full")
-
         tmp: Path | None = None
         try:
             if not is_complete_jpeg(src):
@@ -182,9 +203,16 @@ def run_pass(
                 skipped += 1
                 continue
 
+            if store.free_bytes() < min_free:
+                log.error("Pi storage below %d bytes, stopping pass", min_free)
+                return result(PassOutcome.STORAGE_FULL, "Pi storage full")
+
             tmp = store.new_tmp_path()
             _copy_fsync(src, tmp)
-            sha = _sha256(tmp)
+            try:
+                sha = _sha256(tmp)
+            except OSError as e:
+                raise PiWriteError(str(e)) from e
             if _sha256(src) != sha:
                 log.warning("skip %s: source changed during copy", src.name)
                 skipped += 1
@@ -206,6 +234,9 @@ def run_pass(
                 imported += 1
             # Recorded (or already was), so the scanner's copy is no longer needed.
             src.unlink()
+        except PiWriteError as e:
+            log.error("Pi-side write error on %s: %s", src.name, e)
+            return result(PassOutcome.PI_WRITE_FAILED, f"Pi storage write failed: {e}")
         except OSError as e:
             log.error("I/O error on %s: %s", src.name, e)
             return result(PassOutcome.MEDIA_LOST, f"Lost contact with scanner storage: {e}")
@@ -292,6 +323,10 @@ class Ingest:
                 res.skipped,
                 res.failed,
             )
+            if res.outcome is PassOutcome.MEDIA_LOST:
+                # The scanner likely started a scan mid-pass and the size dip went unseen
+                # because tick() was blocked. Re-arm so the next non-zero tick retries.
+                self._last_size = 0
             if res.outcome is not PassOutcome.OK:
                 problem = res.message
             elif res.failed:

@@ -96,7 +96,6 @@ def test_is_complete_jpeg(tmp_path):
                            (b"\xff\xd8abc", False), (b"abc\xff\xd9", False)]:
         p.write_bytes(data)
         assert is_complete_jpeg(p) is expected
-    assert not is_complete_jpeg(tmp_path / "missing.jpg")
 
 
 def test_hash_mismatch_when_source_changes_during_copy(flash, store, tmp_path, monkeypatch):
@@ -431,3 +430,69 @@ def test_run_loop_stops(rig):
     stop.set()
     t.join(timeout=2)
     assert not t.is_alive()
+
+
+# -- fix round 1 -----------------------------------------------------------
+
+
+def test_media_lost_rearms_so_next_nonzero_tick_retries(rig, monkeypatch):
+    probe, mounter, ing = rig
+    outcomes = iter([PassOutcome.MEDIA_LOST, PassOutcome.OK])
+    monkeypatch.setattr(
+        ingest,
+        "run_pass",
+        lambda *a, **k: ingest.PassResult(next(outcomes), message="Lost contact"),
+    )
+    probe.is_present = True
+    ing.tick()
+    assert ing.status().state is ScannerState.PROBLEM
+    ing.tick()  # size never seen at 0, but the pass is retried
+    assert mounter.events == ["mount", "unmount"] * 2
+    assert ing.status().state is ScannerState.READY
+    ing.tick()
+    assert mounter.events == ["mount", "unmount"] * 2
+
+
+def test_unmount_still_attempted_when_sync_fails(tmp_path):
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append(args[0])
+        return SimpleNamespace(returncode=1 if args[0] == "sync" else 0, stderr="sync boom")
+
+    with pytest.raises(MountError, match="sync boom"):
+        Mounter(tmp_path, run=fake_run).unmount()
+    assert calls == ["sync", "umount"]
+
+
+def test_is_complete_jpeg_propagates_real_io_errors(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        is_complete_jpeg(tmp_path / "missing.jpg")
+
+
+def test_pi_side_write_error_is_distinguished(flash, store, tmp_path, monkeypatch):
+    src = put(flash, tmp_path, "IMG_0001.JPG", 1)
+
+    def full(s, d):
+        raise ingest.PiWriteError("No space left on device")
+
+    monkeypatch.setattr(ingest, "_copy_fsync", full)
+    res, _ = run(flash, store)
+    assert res.outcome is PassOutcome.PI_WRITE_FAILED
+    assert "Pi storage" in res.message and "scanner" not in res.message
+    assert src.exists()
+
+
+def test_copy_wraps_destination_errors_only(tmp_path):
+    src = tmp_path / "s.jpg"
+    src.write_bytes(b"data")
+    with pytest.raises(ingest.PiWriteError):
+        ingest._copy_fsync(src, tmp_path / "no-such-dir" / "d.tmp")
+    with pytest.raises(FileNotFoundError):
+        ingest._copy_fsync(tmp_path / "missing", tmp_path / "d.tmp")
+
+
+def test_incomplete_check_comes_before_free_space(flash, store, tmp_path):
+    (flash / "DOXIE" / "JPEG" / "IMG_0001.JPG").write_bytes(b"\xff\xd8 partial")
+    res, _ = run(flash, store, min_free=10**18)
+    assert res.outcome is PassOutcome.OK and res.skipped == 1
