@@ -61,6 +61,7 @@ def client(store, sender, state):
         lambda: state["scanner"],
         lambda: state["paperless"],
         "http://paperless.lan:8000/",
+        ["testserver"],
     )
     return TestClient(app, follow_redirects=False)
 
@@ -337,7 +338,7 @@ def test_real_ingest_problem_renders_with_one_prefix(store, sender, tmp_path):
 
     ing = Ingest(Probe(), Mounter(), store)
     ing.tick()
-    app = create_app(store, sender, ing.status, lambda: True, "http://p/")
+    app = create_app(store, sender, ing.status, lambda: True, "http://p/", ["testserver"])
     text = TestClient(app).get("/fragments/status").text
     assert "Problem: mount failed: wrong fs type" in text
     assert "Problem: Problem" not in text
@@ -375,3 +376,30 @@ def test_post_without_origin_works(client):
 
 def test_get_ignores_origin(client):
     assert client.get("/", headers={"Origin": "http://evil.example"}).status_code == 200
+
+
+# -- Host allowlist (DNS rebinding) --------------------------------------------
+
+
+def test_rebound_hostname_is_refused_even_same_origin(client, store):
+    add(store, 1)
+    h = {"Host": "evil.example:8080", "Origin": "http://evil.example:8080"}
+    assert client.post("/send-all", headers=h).status_code == 400
+    assert ids(store) != []
+    assert client.get("/", headers={"Host": "evil.example"}).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "host", ["192.168.1.20:8080", "[fe80::1]:8080", "localhost:8080", "TestServer"]
+)
+def test_ip_literals_and_known_names_pass(client, host):
+    assert client.get("/", headers={"Host": host}).status_code == 200
+
+
+def test_pi_hostname_dot_local_passes(client, monkeypatch):
+    import socket
+
+    from piscan.web.app import default_hosts
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "PiScan")
+    assert {"piscan", "piscan.local", "localhost"} <= default_hosts()

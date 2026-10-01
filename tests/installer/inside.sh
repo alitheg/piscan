@@ -86,7 +86,16 @@ run_installer --wheel "$(wheel /wheels-next)" || fail "unit repair run exits 0"
 check "unit restored from the package" bash -c '! grep -q "local edit" /etc/systemd/system/piscan.service'
 check "unit repair is reported" grep -q 'installed /etc/systemd/system/piscan.service' /tmp/out
 
-# 6. Bad options.
+# 6. A rebuilt wheel with the same version is installed, then a re-run is a no-op.
+run_installer --wheel "$(wheel /wheels-rebuild)" || fail "rebuild run exits 0"
+cat /tmp/out
+check "rebuild is reinstalled" grep -q "reinstalled piscan $NEXT from a different wheel" /tmp/out
+check "venv has the rebuilt code" grep -q '# rebuilt' /opt/piscan/venv/lib/python3*/site-packages/piscan/__init__.py
+check "venv still at $NEXT" bash -c "[ \"\$(/opt/piscan/venv/bin/python -c 'import importlib.metadata as m; print(m.version(\"piscan\"))')\" = '$NEXT' ]"
+run_installer --wheel "$(wheel /wheels-rebuild)" || fail "rebuild re-run exits 0"
+check "rebuild re-run skipped pip" grep -q 'already installed, skipping pip' /tmp/out
+
+# 7. Bad options.
 check "unknown option rejected" bash -c "! bash $INSTALL --bogus </dev/null"
 check "--wheel with a missing file rejected" bash -c "! bash $INSTALL --wheel /nope.whl </dev/null"
 

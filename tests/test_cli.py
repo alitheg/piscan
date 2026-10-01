@@ -77,7 +77,7 @@ def test_wiring_builds_app_and_threads_start_and_stop(tmp_path):
     try:
         assert {t.name for t in threads} == {"ingest", "sender", "housekeeping"}
         assert all(t.is_alive() for t in threads)
-        body = TestClient(components.app).get("/fragments/status").text
+        body = TestClient(components.app, base_url="http://localhost").get("/fragments/status").text
         assert "Scanner off / unplugged" in body
     finally:
         cli.stop_workers(stop, threads, timeout=5)

@@ -88,7 +88,7 @@ Page images live at `/var/lib/piscan/pages/<sha256>.jpg`, with thumbnails (about
 
 Rules:
 - An imported page becomes a new one-page draft.
-- Merge moves the pages of the selected drafts into the first one (arrival order) and deletes the now-empty drafts.
+- Merge moves the pages of the selected drafts into the first one (arrival order) and deletes the now-empty drafts. The drafts are joined end to end in arrival order, each keeping its own page order.
 - Split moves one page out into a new draft. Reorder changes `position`.
 - Deleting the last page of a draft deletes the draft.
 - After Paperless confirms a document, its page files are deleted. The draft row stays as `sent` for 24 h (for the *Recently sent* list), then is purged.

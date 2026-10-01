@@ -37,6 +37,12 @@ mkdir "$work/wheels-next"
 "$python" -m build --wheel --outdir "$work/wheels-next" "$bump" >/dev/null
 echo "    current=$current upgrade=$next"
 
+# Same version as the upgrade wheel but different contents, like a CI test build.
+echo "==> Building a same-version rebuild for the reinstall test"
+echo "# rebuilt" >>"$bump/src/piscan/__init__.py"
+mkdir "$work/wheels-rebuild"
+"$python" -m build --wheel --outdir "$work/wheels-rebuild" "$bump" >/dev/null
+
 echo "==> Running $image in $platform"
 docker run --rm --platform "$platform" \
     -e CURRENT="$current" -e NEXT="$next" \
@@ -44,4 +50,5 @@ docker run --rm --platform "$platform" \
     -v "$here/inside.sh:/test/inside.sh:ro" \
     -v "$work/wheels:/wheels:ro" \
     -v "$work/wheels-next:/wheels-next:ro" \
+    -v "$work/wheels-rebuild:/wheels-rebuild:ro" \
     "$image" bash /test/inside.sh

@@ -52,7 +52,14 @@ def build_components(config: Config) -> Components:
     client = PaperlessClient(config.paperless_url, config.paperless_token)
     sender = Sender(store, client)
     sender.recover()
-    app = create_app(store, sender, ingest.status, sender.health, config.paperless_url)
+    app = create_app(
+        store,
+        sender,
+        ingest.status,
+        sender.health,
+        config.paperless_url,
+        config.allowed_hosts,
+    )
     return Components(store, ingest, sender, app)
 
 

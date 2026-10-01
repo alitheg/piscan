@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import ipaddress
+import socket
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -37,6 +39,28 @@ def clock(dt: datetime) -> str:
     return f"{local.day} {local.strftime('%b')}"
 
 
+def default_hosts() -> set[str]:
+    name = socket.gethostname().lower()
+    return {name, f"{name}.local", "localhost"}
+
+
+def host_allowed(host_header: str | None, allowed: set[str]) -> bool:
+    """IP literals always pass: DNS rebinding needs a name the attacker controls."""
+    if not host_header:
+        return False
+    try:
+        host = urlsplit(f"//{host_header}").hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return host.rstrip(".") in allowed
+    return True
+
+
 def scanner_text(s: ScannerStatus) -> str:
     match s.state:
         case ScannerState.OFF:
@@ -59,12 +83,19 @@ def create_app(
     scanner_status: Callable[[], ScannerStatus],
     paperless_health: Callable[[], bool | None],
     paperless_url: str,
+    allowed_hosts: Iterable[str] = (),
 ) -> FastAPI:
     app = FastAPI(title="piscan", docs_url=None, redoc_url=None, openapi_url=None)
+    hosts = default_hosts() | {h.lower().rstrip(".") for h in allowed_hosts}
+
     @app.middleware("http")
     async def same_origin_only(request: Request, call_next):
-        # Cheap CSRF / DNS-rebinding guard. Requests with neither header (curl, old
-        # browsers) pass.
+        # DNS-rebinding guard: a rebound page sends its own name as Host (and as
+        # Origin, so the check below can't catch it). Covers GETs too, since
+        # the scans themselves are readable.
+        if not host_allowed(request.headers.get("host"), hosts):
+            return PlainTextResponse("Unknown Host header", status_code=400)
+        # Cheap CSRF guard. Requests with neither header (curl, old browsers) pass.
         if request.method == "POST":
             origin = request.headers.get("origin")
             cross_site = request.headers.get("sec-fetch-site") == "cross-site"

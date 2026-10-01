@@ -66,3 +66,12 @@ def test_trailing_slash_stripped(tmp_path):
 def test_missing_file(tmp_path):
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "nope.toml")
+
+
+def test_allowed_hosts(tmp_path):
+    base = '[paperless]\nurl = "http://p"\ntoken = "t"\n'
+    assert load_config(write(tmp_path, base)).allowed_hosts == ()
+    cfg = load_config(write(tmp_path, base + '[web]\nallowed_hosts = ["scan.lan"]\n'))
+    assert cfg.allowed_hosts == ("scan.lan",)
+    with pytest.raises(ConfigError):
+        load_config(write(tmp_path, base + '[web]\nallowed_hosts = "scan.lan"\n'))
