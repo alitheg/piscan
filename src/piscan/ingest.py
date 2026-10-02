@@ -11,6 +11,7 @@ import enum
 import hashlib
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -52,10 +53,14 @@ class DeviceProbe:
     def __init__(self, device: Path, sys_block: Path = Path("/sys/class/block")):
         self.device = device
         self.sys_block = sys_block
+        # While the Doxie writes a scan the kernel drops the partition (and its -partN link),
+        # but the whole disk stays. So the disk says whether the scanner is plugged in, and
+        # a missing partition just reads as size 0, i.e. scanning.
+        self.disk = device.with_name(re.sub(r"-part\d+$", "", device.name))
 
     def present(self) -> bool:
         # exists() follows the symlink, so a dangling by-id link counts as absent.
-        return self.device.exists()
+        return self.disk.exists()
 
     def size(self) -> int:
         """Size in 512-byte sectors, or 0 if unreadable (which is also how a scan looks)."""

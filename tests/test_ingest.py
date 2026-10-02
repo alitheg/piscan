@@ -229,6 +229,36 @@ def test_probe_resolves_symlink_each_time(tmp_path):
     assert probe.size() == 0
 
 
+def test_probe_partition_vanishing_mid_scan_reads_as_present_and_empty(tmp_path):
+    # What a Pi Zero W showed: while the Doxie writes a scan the kernel drops sda1 and its
+    # -part1 link, but the whole-disk link stays.
+    sys_block = tmp_path / "sys"
+    (sys_block / "sda1").mkdir(parents=True)
+    (sys_block / "sda1" / "size").write_text("978944\n")
+    dev = tmp_path / "dev"
+    dev.mkdir()
+    (dev / "sda").touch()
+    (dev / "sda1").touch()
+    by_id = tmp_path / "by-id"
+    by_id.mkdir()
+    disk_link = by_id / "usb-S2Flash_USB_Mass_Storage_0123-0:0"
+    part_link = by_id / "usb-S2Flash_USB_Mass_Storage_0123-0:0-part1"
+    disk_link.symlink_to(dev / "sda")
+    part_link.symlink_to(dev / "sda1")
+    probe = DeviceProbe(part_link, sys_block)
+    assert probe.present() and probe.size() == 978944
+
+    part_link.unlink()
+    (dev / "sda1").unlink()
+    (sys_block / "sda1" / "size").unlink()
+    (sys_block / "sda1").rmdir()
+    assert probe.present()
+    assert probe.size() == 0
+
+    disk_link.unlink()
+    assert not probe.present()
+
+
 def test_probe_unreadable_size_is_zero(tmp_path):
     dev = tmp_path / "sda1"
     dev.touch()
