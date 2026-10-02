@@ -10,7 +10,8 @@ The design is in [docs/superpowers/specs/2026-10-01-piscan-design.md](docs/super
 
 ## Hardware
 
-- Raspberry Pi Zero 2 W running Raspberry Pi OS Lite, 64-bit (trixie, which ships Python 3.13). Use the 64-bit image - it gets prebuilt `pikepdf` wheels, which the 32-bit one may not, and building `pikepdf` on a Zero is slow at best. The older bookworm base (Python 3.11) should still work.
+- Raspberry Pi Zero 2 W running Raspberry Pi OS Lite, 64-bit (trixie, which ships Python 3.13). The older bookworm base (Python 3.11) should still work.
+- An original Pi Zero W also works, on 32-bit Pi OS Lite (it can't run 64-bit). It's noticeably slower - one ARMv6 core - but piscan is mostly idle. Its wheels come from piwheels, which link against Debian's shared libraries instead of bundling them, so the installer apt-installs those on 32-bit systems. The Build workflow checks that every dependency has a prebuilt wheel for both boards, so nothing gets compiled on the Pi.
 - The Doxie on the Zero's USB data port, through an OTG adapter.
 - A 2.5 A supply, or a powered hub. The Doxie charges from the Pi, and a weak supply brings on brownouts.
 - A separate Paperless-ngx server on the same network.

@@ -22,6 +22,10 @@ FSTAB="/etc/fstab"
 DEFAULT_DEVICE="/dev/disk/by-id/usb-S2Flash_USB_Mass_Storage_012345115962181711-0:0-part1"
 DEFAULT_MOUNTPOINT="/mnt/doxie"
 DEFAULT_PORT="8080"
+# Shared libraries the piwheels builds of Pillow, pikepdf and lxml link against on
+# 32-bit Pi OS (trixie). Found with ldd on a Pi Zero W.
+PIWHEELS_LIBS=(libavif16 libfreetype6 liblcms2-2 libopenjp2-7 libqpdf30
+    libwebpdemux2 libwebpmux3 libxslt1.1)
 
 WANT_VERSION=""
 LOCAL_WHEEL=""
@@ -29,6 +33,7 @@ USE_SYSTEMD=1
 WORKDIR=""
 CHANGES=()
 PKG_CHANGED=0
+APT_UPDATED=""
 UNIT_CHANGED=0
 CONFIG_CREATED=0
 # Set from the config (or the defaults) once it is known.
@@ -116,14 +121,44 @@ EOF
         exit 1
     fi
 
-    if ! dpkg -s python3-venv >/dev/null 2>&1; then
-        log "Installing python3-venv"
-        apt-get update -qq </dev/null
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv </dev/null
-        changed "installed python3-venv"
+    apt_ensure python3-venv
+    # 32-bit Pi OS gets its wheels from piwheels, which link against Debian's shared
+    # libraries rather than bundling them (PyPI's manylinux wheels bundle theirs).
+    if [[ "$(dpkg --print-architecture)" == armhf ]]; then
+        apt_ensure "${PIWHEELS_LIBS[@]}"
     fi
     python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
         || die "python 3.11 or newer is required"
+}
+
+# Installs whichever of the given apt packages are missing, refreshing the
+# package lists at most once per run.
+apt_ensure() {
+    local missing=() pkg
+    for pkg in "$@"; do
+        dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
+    done
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+    log "Installing ${missing[*]}"
+    if [[ -z "$APT_UPDATED" ]]; then
+        apt-get update -qq </dev/null
+        APT_UPDATED=1
+    fi
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}" </dev/null
+    changed "installed ${missing[*]}"
+}
+
+# Catches a compiled module whose shared library isn't installed, which would
+# otherwise only show up as the service crash-looping on import.
+check_shared_libs() {
+    local missing
+    missing="$(find "$VENV_DIR/lib" -name '*.so*' -type f -print0 \
+        | xargs -0 -r ldd 2>/dev/null | awk '/not found/ {print $1}' | sort -u)"
+    if [[ -n "$missing" ]]; then
+        die "these shared libraries are missing for piscan's dependencies:
+$missing
+Install the Debian packages that provide them, then re-run this installer."
+    fi
 }
 
 # Step 2: sets WHEEL_PATH and TARGET_VERSION. Downloads only if the version
@@ -438,6 +473,7 @@ main() {
     # Before install_package, which creates the mountpoint a hand-edited config names.
     load_config_values
     install_package
+    check_shared_libs
     ensure_fstab
     ensure_config
     # The config may have just been created, so read it again.
