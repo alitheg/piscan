@@ -18,7 +18,9 @@ dependencies = [
     "httpx>=0.28.1",
     "pillow>=12.3.0",
     "img2pdf>=0.6.3",
-    "pikepdf>=10.16.0",
+    # Kept low on purpose: piwheels' newest armv6l (Pi Zero W) build is 10.8.0, and anything
+    # newer means compiling pikepdf on the Pi.
+    "pikepdf>=10.8.0",
 ]
 
 [project.optional-dependencies]

@@ -28,6 +28,8 @@ jobs:
           for f in piscan/piscan.service piscan/web/templates/index.html piscan/web/static/htmx.min.js piscan/web/static/style.css; do
             grep -q "$f" <<<"$contents" || { echo "missing from wheel: $f" >&2; exit 1; }
           done
+      - name: Check every dependency has a prebuilt wheel for the Pi
+        run: bash scripts/check-pi-wheels.sh dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
           name: piscan-${{ github.sha }}
